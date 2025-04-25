@@ -35,27 +35,24 @@ from fiddle._src import daglish, diffing
 from rich.console import Group
 from rich.live import Live
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, SpinnerColumn, TaskID, TimeElapsedColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn
 from rich.progress import Task as RichTask
+from rich.progress import TaskID, TimeElapsedColumn
 from rich.syntax import Syntax
 from torchx.specs.api import AppState
 
 import nemo_run as run
-from nemo_run.config import (
-    Config,
-    ConfigurableMixin,
-    Partial,
-    Script,
-    get_nemorun_home,
-    get_type_namespace,
-)
+from nemo_run.config import (Config, ConfigurableMixin, Partial, Script,
+                             get_nemorun_home, get_type_namespace)
 from nemo_run.core.execution.base import Executor
 from nemo_run.core.execution.dgxcloud import DGXCloudExecutor
 from nemo_run.core.execution.docker import DockerExecutor
+from nemo_run.core.execution.lepton import LeptonExecutor
 from nemo_run.core.execution.local import LocalExecutor
 from nemo_run.core.execution.skypilot import SkypilotExecutor
 from nemo_run.core.execution.slurm import SlurmExecutor
-from nemo_run.core.frontend.console.api import CONSOLE, configure_logging, deconfigure_logging
+from nemo_run.core.frontend.console.api import (CONSOLE, configure_logging,
+                                                deconfigure_logging)
 from nemo_run.core.serialization.zlib_json import ZlibJSONSerializer
 from nemo_run.core.tunnel.client import SSHTunnel, Tunnel
 from nemo_run.core.tunnel.rsync import rsync
@@ -202,8 +199,9 @@ nemo experiment cancel {exp_id} 0
         SkypilotExecutor,
         DockerExecutor,
         DGXCloudExecutor,
+        LeptonExecutor,
     )
-    _DETACH_SUPPORTED_EXECUTORS = (SlurmExecutor, SkypilotExecutor, DGXCloudExecutor)
+    _DETACH_SUPPORTED_EXECUTORS = (SlurmExecutor, SkypilotExecutor, DGXCloudExecutor, LeptonExecutor)
     _DEPENDENCY_SUPPORTED_EXECUTORS = (SlurmExecutor,)
     _RUNNER_DEPENDENT_EXECUTORS = (LocalExecutor,)
     _CONFIG_FILE = "_CONFIG"
