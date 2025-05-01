@@ -44,6 +44,7 @@ class LeptonExecutor(Executor):
     shared_memory_size: int = 65536
     resource_shape: str = ""
     node_group: str = ""
+    mounts: list[dict[str, Any]] = field(default_factory=list)
     lepton_job_dir: str = field(init=False, default="")
     custom_spec: dict[str, Any] = field(default_factory=dict)
 
@@ -141,7 +142,7 @@ class LeptonExecutor(Executor):
             max_job_failure_retry=None,
             envs=envs,
             mounts=[
-                Mount(path="/nemo-workspace", mount_path="/nemo-workspace")
+                Mount(path=mount["path"], mount_path=mount["mount_path"]) for mount in self.mounts
             ],
             image_pull_secrets=[],
             ttl_seconds_after_finished=None,
