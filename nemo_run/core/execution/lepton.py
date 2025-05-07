@@ -168,7 +168,7 @@ class LeptonExecutor(Executor):
             resource_shape=self.resource_shape,
             affinity=LeptonResourceAffinity(
                 allowed_dedicated_node_groups=[node_group_id.metadata.id_],
-                allowed_nodes_in_node_group=list(valid_node_ids)
+                # allowed_nodes_in_node_group=list(valid_node_ids)
             ),
             container=LeptonContainer(
                 image=self.container_image,
