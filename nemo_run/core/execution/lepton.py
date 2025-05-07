@@ -174,6 +174,7 @@ class LeptonExecutor(Executor):
                 image=self.container_image,
                 command=cmd
             ),
+            ttl_seconds_after_finished = 259200,
             shared_memory_size=self.shared_memory_size,
             completions=self.nodes,
             parallelism=self.nodes,
@@ -185,7 +186,6 @@ class LeptonExecutor(Executor):
             ],
             
             image_pull_secrets=[],
-            ttl_seconds_after_finished=None,
             intra_job_communication=True,
             privileged=False,
             metrics=None,
