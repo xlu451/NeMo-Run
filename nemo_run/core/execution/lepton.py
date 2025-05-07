@@ -12,7 +12,7 @@ from leptonai.api.v1.client import APIClient
 from leptonai.api.v1.types.affinity import LeptonResourceAffinity
 from leptonai.api.v1.types.common import Metadata
 from leptonai.api.v1.types.dedicated_node_group import DedicatedNodeGroup
-from leptonai.api.v1.types.deployment import EnvVar, LeptonContainer, Mount
+from leptonai.api.v1.types.deployment import EnvVar, LeptonContainer, Mount, EnvValue
 from leptonai.api.v1.types.job import (LeptonJob, LeptonJobState,
                                        LeptonJobUserSpec)
 from leptonai.api.v1.types.replica import Replica
@@ -21,6 +21,8 @@ from nemo_run.config import get_nemorun_home
 from nemo_run.core.execution.base import Executor, ExecutorMacros
 from nemo_run.core.packaging.base import Packager
 from nemo_run.core.packaging.git import GitArchivePackager
+import boto3
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
 
@@ -65,27 +67,41 @@ class LeptonExecutor(Executor):
 
     def move_data(self, sleep: float = 10) -> None:
         """
-        Moves job directory into PVC and deletes the workload after completion
+        Moves job directory into S3 and deletes the workload after completion
         """
-        client = APIClient()
-        client.storage.create_dir(additional_path=self.lepton_job_dir)
+        # Get S3 configuration from environment variables
+        s3_access_key = os.getenv('AWS_ACCESS_KEY_ID')
+        s3_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+        s3_region = os.getenv('AWS_REGION', 'us-east-1')  # Default to us-east-1
+        s3_bucket = os.getenv('S3_BUCKET')
+        # s3_endpoint = os.getenv('AWS_ENDPOINT_URL', 'https://s3.amazonaws.com')  # Default to AWS S3 endpoint
 
-        # Create all sub-directories in the directory tree
-        # Then, copy all files to the storage
-        for root, dirs, files in os.walk(self.job_dir):
-            # Create the sub-directories
-            for dir in dirs:
-                abs_path = os.path.join(root, dir)
-                relative_path = os.path.join(self.lepton_job_dir, abs_path.replace(self.job_dir, "").lstrip("/"))
-                client.storage.create_dir(additional_path=relative_path)
-            # Copy the files in each sub-directory to the remote filesystem
-            for file in files:
-                abs_path = os.path.join(root, file)
-                relative_path = os.path.join(self.lepton_job_dir, abs_path.replace(self.job_dir, "").lstrip("/"))
-                client.storage.create_file(
-                    local_path=abs_path,
-                    remote_path=relative_path
-                )
+        # Clean bucket name if it contains s3:// prefix
+        if s3_bucket and s3_bucket.startswith('s3://'):
+            s3_bucket = s3_bucket[5:]  # Remove 's3://' prefix
+
+        # Validate S3 configuration
+        if not all([s3_access_key, s3_secret_key, s3_bucket]):
+            raise ValueError("Missing required S3 configuration in environment variables")
+
+        # Initialize S3 client
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=s3_access_key,
+            aws_secret_access_key=s3_secret_key,
+            region_name=s3_region,
+            # endpoint_url=s3_endpoint
+        )
+
+        # Use aws s3 sync to upload the entire directory
+        try:
+            subprocess.run(
+                f"aws s3 sync {self.job_dir} s3://{s3_bucket}{self.lepton_job_dir}",
+                shell=True,
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Failed to sync directory to S3: {str(e)}")
 
     def _node_group_id(self, client: APIClient) -> DedicatedNodeGroup:
         """
@@ -123,11 +139,21 @@ class LeptonExecutor(Executor):
         envs = [
             EnvVar(name=key, value=value) for key, value in self.env_vars.items()
         ]
+        envs.append(EnvVar(name="XLU_AWS_KEY_ID", value_from=EnvValue(secret_name_ref="XLU_AWS_KEY_ID")))
+        envs.append(EnvVar(name="XLU_AWS_SECRET_ACCESS_KEY", value_from=EnvValue(secret_name_ref="XLU_AWS_SECRET_ACCESS_KEY")))
+        # envs.append(EnvVar(name="AWS_REGION", value="us-east-1"))
+        envs.append(EnvVar(name="XLU_S3_BUCKET", value_from=EnvValue(secret_name_ref="XLU_S3_BUCKET")))
 
         cmd = [
             "/bin/bash",
             "-c",
-            f"chmod +x {self.lepton_job_dir}/launch_script.sh && bash {self.lepton_job_dir}/launch_script.sh"
+            f"""
+            # Download data from S3
+            AWS_ACCESS_KEY_ID=$XLU_AWS_KEY_ID AWS_SECRET_ACCESS_KEY=$XLU_AWS_SECRET_ACCESS_KEY AWS_REGION=us-east-1 S3_BUCKET=$XLU_S3_BUCKET aws s3 sync s3://{os.getenv('S3_BUCKET')}{self.lepton_job_dir} {self.lepton_job_dir}
+            
+            # Execute the launch script
+            chmod +x {self.lepton_job_dir}/launch_script.sh && bash {self.lepton_job_dir}/launch_script.sh
+            """
         ]
 
         # Get ID of requested node group
@@ -157,6 +183,7 @@ class LeptonExecutor(Executor):
             mounts=[
                 Mount(path=mount["path"], mount_path=mount["mount_path"]) for mount in self.mounts
             ],
+            
             image_pull_secrets=[],
             ttl_seconds_after_finished=None,
             intra_job_communication=True,
