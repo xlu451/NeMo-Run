@@ -67,41 +67,23 @@ class LeptonExecutor(Executor):
 
     def move_data(self, sleep: float = 10) -> None:
         """
-        Moves job directory into S3 and deletes the workload after completion
+        Moves job directory into /data/nemo-test
         """
-        # Get S3 configuration from environment variables
-        s3_access_key = os.getenv('AWS_ACCESS_KEY_ID')
-        s3_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
-        s3_region = os.getenv('AWS_REGION', 'us-east-1')  # Default to us-east-1
-        s3_bucket = os.getenv('S3_BUCKET')
-        # s3_endpoint = os.getenv('AWS_ENDPOINT_URL', 'https://s3.amazonaws.com')  # Default to AWS S3 endpoint
-
-        # Clean bucket name if it contains s3:// prefix
-        if s3_bucket and s3_bucket.startswith('s3://'):
-            s3_bucket = s3_bucket[5:]  # Remove 's3://' prefix
-
-        # Validate S3 configuration
-        if not all([s3_access_key, s3_secret_key, s3_bucket]):
-            raise ValueError("Missing required S3 configuration in environment variables")
-
-        # Initialize S3 client
-        s3_client = boto3.client(
-            's3',
-            aws_access_key_id=s3_access_key,
-            aws_secret_access_key=s3_secret_key,
-            region_name=s3_region,
-            # endpoint_url=s3_endpoint
-        )
-
-        # Use aws s3 sync to upload the entire directory
         try:
+            # Create target directory first
             subprocess.run(
-                f"aws s3 sync {self.job_dir} s3://{s3_bucket}{self.lepton_job_dir}",
+                f"mkdir -p /data/nemo-test{self.lepton_job_dir}",
+                shell=True,
+                check=True
+            )
+            # Then copy files
+            subprocess.run(
+                f"cp -r {self.job_dir}/* /data/nemo-test{self.lepton_job_dir}",
                 shell=True,
                 check=True
             )
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to sync directory to S3: {str(e)}")
+            raise RuntimeError(f"Failed to copy directory to /data/nemo-test: {str(e)}")
 
     def _node_group_id(self, client: APIClient) -> DedicatedNodeGroup:
         """
@@ -139,17 +121,16 @@ class LeptonExecutor(Executor):
         envs = [
             EnvVar(name=key, value=value) for key, value in self.env_vars.items()
         ]
-        envs.append(EnvVar(name="XLU_AWS_KEY_ID", value_from=EnvValue(secret_name_ref="XLU_AWS_KEY_ID")))
-        envs.append(EnvVar(name="XLU_AWS_SECRET_ACCESS_KEY", value_from=EnvValue(secret_name_ref="XLU_AWS_SECRET_ACCESS_KEY")))
-        # envs.append(EnvVar(name="AWS_REGION", value="us-east-1"))
-        envs.append(EnvVar(name="XLU_S3_BUCKET", value_from=EnvValue(secret_name_ref="XLU_S3_BUCKET")))
 
         cmd = [
             "/bin/bash",
             "-c",
             f"""
-            # Download data from S3
-            AWS_ACCESS_KEY_ID=$XLU_AWS_KEY_ID AWS_SECRET_ACCESS_KEY=$XLU_AWS_SECRET_ACCESS_KEY AWS_REGION=us-east-1 S3_BUCKET=$XLU_S3_BUCKET aws s3 sync s3://{os.getenv('S3_BUCKET')}{self.lepton_job_dir} {self.lepton_job_dir}
+            # Create target directory first
+            mkdir -p {self.lepton_job_dir}
+            
+            # Move files from /data/nemo-test to lepton_job_dir
+            cp -r /data/nemo-test{self.lepton_job_dir}/* {self.lepton_job_dir} 
             
             # Execute the launch script
             chmod +x {self.lepton_job_dir}/launch_script.sh && bash {self.lepton_job_dir}/launch_script.sh
@@ -182,7 +163,8 @@ class LeptonExecutor(Executor):
             max_job_failure_retry=None,
             envs=envs,
             mounts=[
-                Mount(path=mount["path"], mount_path=mount["mount_path"]) for mount in self.mounts
+                Mount(path="/", mount_path="/data", **{"from": "local-path-for-local:weka-data"}),
+                # Mount(path=mount["path"], mount_path=mount["mount_path"]) for mount in self.mounts
             ],
             
             image_pull_secrets=[],
